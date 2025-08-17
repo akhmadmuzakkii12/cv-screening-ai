@@ -14,7 +14,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load pre-trained embedding model
+st.title("📄 CV Screening & Job Recommendation")
+st.markdown(
+    """
+    Aplikasi ini membantu **screening CV** dan memberikan rekomendasi pekerjaan 
+    berdasarkan kesesuaian dengan **job descriptions dari API (Jooble)**.
+    """
+)
+
+# =========================
+# Load Model Embedding
+# =========================
 @st.cache_resource
 def load_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
@@ -34,25 +44,46 @@ def extract_text_from_pdf(uploaded_file):
                 cv_text += text + "\n"
     return cv_text.strip()
 
-def fetch_job_descriptions(query="data", location="Indonesia", limit=5):
-    """Ambil job descriptions dari API eksternal (contoh dummy)."""
-    API_URL = f"https://dummyjson.com/jobs/search?q={query}&limit={limit}"
+
+def fetch_job_descriptions(query="data", location="Indonesia", limit=5, page=1):
+    """
+    Ambil job descriptions dari Jooble API (fallback ke dummyjson jika tidak ada API key).
+    """
+    jobs = []
     try:
-        response = requests.get(API_URL, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            jobs = [f"{job['title']} at {job['company']} - {job['description']}" 
-                    for job in data.get("jobs", [])]
-            return jobs
+        if "JOOBLE_API_KEY" in st.secrets:
+            API_KEY = st.secrets["JOOBLE_API_KEY"]
+            API_URL = f"https://jooble.org/api/{API_KEY}"
+            payload = {"keywords": query, "location": location, "page": page}
+            response = requests.post(API_URL, json=payload, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                jobs = [
+                    f"{job['title']} at {job['company']} - {job['location']}. {job['snippet']}"
+                    for job in data.get("jobs", [])
+                ]
+            else:
+                st.warning(f"⚠️ Gagal ambil data Jooble API. Status: {response.status_code}")
         else:
-            st.warning("⚠️ Gagal mengambil data dari API. Status:", response.status_code)
-            return []
+            # Dummy API fallback (tanpa API key)
+            API_URL = f"https://dummyjson.com/jobs/search?q={query}&limit={limit}"
+            response = requests.get(API_URL, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                jobs = [f"{job['title']} at {job['company']} - {job['description']}"
+                        for job in data.get("jobs", [])]
     except Exception as e:
         st.error(f"❌ Error saat mengambil data API: {e}")
-        return []
+
+    return jobs
+
 
 def rank_jobs(cv_text, job_descriptions):
     """Hitung kesesuaian antara CV dan daftar job descriptions."""
+    if not job_descriptions:
+        return pd.DataFrame()
+
     cv_vector = model.encode(cv_text, convert_to_tensor=True)
     job_vectors = model.encode(job_descriptions, convert_to_tensor=True)
 
@@ -69,27 +100,19 @@ def rank_jobs(cv_text, job_descriptions):
 # =========================
 # UI / Tampilan
 # =========================
-st.title("📄 CV Screening & Job Recommendation (API Version)")
-st.markdown(
-    """
-    Aplikasi ini membantu **screening CV** dan memberikan rekomendasi pekerjaan 
-    berdasarkan kesesuaian dengan **job descriptions dari API**.
-    """
-)
-
-# Sidebar untuk upload dan opsi
+# Sidebar
 st.sidebar.header("📂 Upload CV")
 uploaded_file = st.sidebar.file_uploader("Pilih file CV (PDF)", type="pdf")
 
-# Sidebar query job
 st.sidebar.header("🔍 Job Search Setting")
-job_query = st.sidebar.text_input("Cari posisi:", value="data")
-job_limit = st.sidebar.slider("Jumlah job diambil dari API:", 3, 15, 5)
+job_query = st.sidebar.text_input("Cari posisi:", value="data scientist")
+job_location = st.sidebar.text_input("Lokasi:", value="Indonesia")
+job_limit = st.sidebar.slider("Jumlah job diambil:", 3, 15, 5)
 
-# Ambil job descriptions dari API
-job_descriptions = fetch_job_descriptions(query=job_query, limit=job_limit)
-
-if uploaded_file and job_descriptions:
+# =========================
+# Main Logic
+# =========================
+if uploaded_file:
     with st.spinner("🔍 Memproses CV..."):
         cv_text = extract_text_from_pdf(uploaded_file)
 
@@ -98,18 +121,24 @@ if uploaded_file and job_descriptions:
     with st.expander("Lihat detail CV"):
         st.write(cv_text)
 
-    # Ranking job rekomendasi
-    st.subheader("🔍 Rekomendasi Pekerjaan")
-    results_df = rank_jobs(cv_text, job_descriptions)
+    # Ambil job descriptions dari API
+    job_descriptions = fetch_job_descriptions(query=job_query, location=job_location, limit=job_limit)
 
-    # Tampilkan hasil sebagai tabel
-    st.dataframe(results_df, use_container_width=True)
+    if job_descriptions:
+        st.subheader("🔍 Rekomendasi Pekerjaan")
+        results_df = rank_jobs(cv_text, job_descriptions)
 
-    # Progress bar untuk tiap pekerjaan
-    for _, row in results_df.iterrows():
-        st.write(f"**{row['Job Description']}**")
-        st.progress(min(max(row['Match Score'], 0), 1))
-elif not uploaded_file:
-    st.info("👈 Silakan upload CV Anda di sidebar untuk memulai analisis.")
+        if not results_df.empty:
+            # Tampilkan hasil sebagai tabel
+            st.dataframe(results_df, use_container_width=True)
+
+            # Progress bar untuk tiap pekerjaan
+            for _, row in results_df.iterrows():
+                st.write(f"**{row['Job Description']}**")
+                st.progress(min(max(row['Match Score'], 0), 1))
+        else:
+            st.warning("⚠️ Tidak ada hasil ranking.")
+    else:
+        st.warning("⚠️ Tidak ada job descriptions dari API.")
 else:
-    st.warning("⚠️ Tidak ada job descriptions dari API yang tersedia.")
+    st.info("👈 Silakan upload CV Anda di sidebar untuk memulai analisis.")
