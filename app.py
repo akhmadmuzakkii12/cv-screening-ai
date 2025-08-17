@@ -10,15 +10,20 @@ from dotenv import load_dotenv
 # =========================
 # Setup API Key
 # =========================
-load_dotenv()  # Baca file .env (jika ada)
+import requests
+import os
+from dotenv import load_dotenv
 
-def get_api_key():
-    """Coba ambil API key dari Streamlit Secrets dulu, fallback ke .env."""
-    if "JOOBLE_API_KEY" in st.secrets:
-        return st.secrets["JOOBLE_API_KEY"]
-    return os.getenv("JOOBLE_API_KEY")
+load_dotenv()
+API_KEY = os.getenv("JOOBLE_API_KEY")
 
-API_KEY = get_api_key()
+url = f"https://jooble.org/api/eb18500283d6446ba0c13caf1c4f46e6"
+payload = {"keywords": "data scientist", "location": "Indonesia"}
+
+response = requests.post(url, json=payload)
+
+print("Status:", response.status_code)
+print("Response:", response.text)
 
 # =========================
 # Setup Aplikasi
@@ -158,3 +163,4 @@ if uploaded_file:
         st.warning("⚠️ Tidak ada job descriptions dari API.")
 else:
     st.info("👈 Silakan upload CV Anda di sidebar untuk memulai analisis.")
+
