@@ -4,6 +4,21 @@ from sentence_transformers import SentenceTransformer, util
 import numpy as np
 import pandas as pd
 import requests
+import os
+from dotenv import load_dotenv
+
+# =========================
+# Setup API Key
+# =========================
+load_dotenv()  # Baca file .env (jika ada)
+
+def get_api_key():
+    """Coba ambil API key dari Streamlit Secrets dulu, fallback ke .env."""
+    if "JOOBLE_API_KEY" in st.secrets:
+        return st.secrets["JOOBLE_API_KEY"]
+    return os.getenv("JOOBLE_API_KEY")
+
+API_KEY = get_api_key()
 
 # =========================
 # Setup Aplikasi
@@ -46,13 +61,10 @@ def extract_text_from_pdf(uploaded_file):
 
 
 def fetch_job_descriptions(query="data", location="Indonesia", limit=5, page=1):
-    """
-    Ambil job descriptions dari Jooble API (fallback ke dummyjson jika tidak ada API key).
-    """
+    """Ambil job descriptions dari Jooble API (jika ada API key), fallback ke Dummy API."""
     jobs = []
     try:
-        if "JOOBLE_API_KEY" in st.secrets:
-            API_KEY = st.secrets["JOOBLE_API_KEY"]
+        if API_KEY:  # Pakai Jooble API
             API_URL = f"https://jooble.org/api/{API_KEY}"
             payload = {"keywords": query, "location": location, "page": page}
             response = requests.post(API_URL, json=payload, timeout=10)
@@ -65,14 +77,15 @@ def fetch_job_descriptions(query="data", location="Indonesia", limit=5, page=1):
                 ]
             else:
                 st.warning(f"⚠️ Gagal ambil data Jooble API. Status: {response.status_code}")
-        else:
-            # Dummy API fallback (tanpa API key)
+        else:  # Pakai Dummy API
             API_URL = f"https://dummyjson.com/jobs/search?q={query}&limit={limit}"
             response = requests.get(API_URL, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                jobs = [f"{job['title']} at {job['company']} - {job['description']}"
-                        for job in data.get("jobs", [])]
+                jobs = [
+                    f"{job['title']} at {job['company']} - {job['description']}"
+                    for job in data.get("jobs", [])
+                ]
     except Exception as e:
         st.error(f"❌ Error saat mengambil data API: {e}")
 
@@ -92,7 +105,10 @@ def rank_jobs(cv_text, job_descriptions):
     ranking = np.argsort(scores)[::-1]
 
     results = [
-        {"Job Description": job_descriptions[idx], "Match Score": round(float(scores[idx]), 2)}
+        {
+            "Job Description": job_descriptions[idx],
+            "Match Score": float(scores[idx])  # simpan raw score (0–1)
+        }
         for idx in ranking
     ]
     return pd.DataFrame(results)
@@ -135,7 +151,7 @@ if uploaded_file:
             # Progress bar untuk tiap pekerjaan
             for _, row in results_df.iterrows():
                 st.write(f"**{row['Job Description']}**")
-                st.progress(min(max(row['Match Score'], 0), 1))
+                st.progress(min(max(row['Match Score'], 0.0), 1.0))  # normalisasi ke 0–1
         else:
             st.warning("⚠️ Tidak ada hasil ranking.")
     else:
